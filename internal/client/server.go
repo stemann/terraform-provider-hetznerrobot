@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"sort"
 	"strings"
-	"time"
 )
 
 // Server defines the body format for /server requests.
@@ -221,7 +220,10 @@ func (c *HetznerRobotClient) EnableRescueMode(
 	return &rescueResp, nil
 }
 
-// RebootServer reboot a server.
+// RebootServer reboots a server via /reset/{server-id}. Valid reset types
+// per the Hetzner Robot API: "sw" (Ctrl+Alt+Del), "hw" (hardware reset
+// button), "power" (power button press), "power_long" (off-then-on power
+// cycle), and "man" (manual).
 func (c *HetznerRobotClient) RebootServer(
 	ctx context.Context,
 	serverID string,
@@ -255,53 +257,6 @@ func (c *HetznerRobotClient) RebootServer(
 		}
 
 		return fmt.Errorf("unexpected status code %d, body: %s", resp.StatusCode, data)
-	}
-
-	if resetType == "power" || resetType == "power_long" {
-		const waitDuration = 30 * time.Second
-		// Allow some time to power off
-		time.Sleep(waitDuration)
-
-		err := c.powerOnServer(ctx, serverID, endpoint)
-		if err != nil {
-			return fmt.Errorf("unable to power on: %w", err)
-		}
-	}
-
-	return nil
-}
-
-func (c *HetznerRobotClient) powerOnServer(
-	ctx context.Context,
-	serverID string,
-	endpoint string,
-) error {
-	data := url.Values{}
-	data.Set("action", "on")
-
-	resp, err := c.DoRequest(
-		ctx,
-		"POST",
-		endpoint,
-		strings.NewReader(data.Encode()),
-		"application/x-www-form-urlencoded",
-	)
-	if err != nil {
-		return fmt.Errorf("error turning on server %s after power off: %w", serverID, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		data, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return fmt.Errorf("unable to read response body: %w", err)
-		}
-
-		return fmt.Errorf(
-			"unexpected status code %d when turning on server, body: %s",
-			resp.StatusCode,
-			data,
-		)
 	}
 
 	return nil
