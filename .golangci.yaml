@@ -22,6 +22,7 @@ linters:
             - github.com/hashicorp/terraform-plugin-sdk/v2
             - github.com/stretchr/testify/assert
             - github.com/getkin/kin-openapi
+            - golang.org/x/crypto/ssh
     exhaustruct:
       exclude:
         - "^net/http.Client$"

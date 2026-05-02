@@ -83,6 +83,19 @@ Only takes effect on Create — changing this forces recreate.`,
 				Sensitive:   true,
 				Description: "One-shot root password for the rescue system. Set only when ssh_keys is empty; otherwise this is empty and you authenticate with one of the listed keys.",
 			},
+			"host_key_fingerprints": {
+				Type:        schema.TypeMap,
+				Computed:    true,
+				Elem:        &schema.Schema{Type: schema.TypeString},
+				Description: "MD5 host-key fingerprints keyed by SSH key algorithm (e.g. \"ssh-ed25519\"), reported by the Hetzner API and verified against the keys actually advertised by the rescue system.",
+			},
+			"host_keys": {
+				Type:     schema.TypeMap,
+				Computed: true,
+				Elem:     &schema.Schema{Type: schema.TypeString},
+				Description: "Authorized_keys-format public keys for the rescue system, keyed by SSH key algorithm (e.g. \"ssh-ed25519\"). " +
+					"Each value is suitable to feed directly into a Terraform connection block, e.g. host_key = self.host_keys[\"ssh-ed25519\"].",
+			},
 		},
 	}
 }
@@ -100,12 +113,7 @@ func resourceOSRescueCreate(
 	serverName := d.Get("server_name").(string)
 	serverID := d.Get("server_id").(string)
 	rescueOS := d.Get("rescue_os").(string)
-	sshKeysRaw := d.Get("ssh_keys").([]any)
-
-	sshKeys := make([]string, 0, len(sshKeysRaw))
-	for _, key := range sshKeysRaw {
-		sshKeys = append(sshKeys, key.(string))
-	}
+	sshKeys := parseSSHKeys(d.Get("ssh_keys").([]any))
 
 	rescueResp, err := hClient.EnableRescueMode(ctx, serverID, rescueOS, sshKeys)
 	if err != nil {
@@ -115,7 +123,6 @@ func resourceOSRescueCreate(
 	}
 
 	ip := rescueResp.Rescue.ServerIP
-	pass := rescueResp.Rescue.Password
 
 	err = hClient.RebootServer(ctx, serverID, d.Get("reboot").(string))
 	if err != nil {
@@ -127,22 +134,53 @@ func resourceOSRescueCreate(
 		return diag.FromErr(fmt.Errorf("SSH not available on server %s: %w", serverID, err))
 	}
 
-	_, err = hClient.RenameServer(ctx, serverID, serverName)
+	err = finalizeOSRescue(ctx, d, hClient, serverID, serverName, rescueResp)
 	if err != nil {
-		return diag.FromErr(fmt.Errorf("failed to rename server %s: %w", serverID, err))
-	}
-
-	err = d.Set("ip", ip)
-	if err != nil {
-		return diag.FromErr(fmt.Errorf("error setting ip attribute: %w", err))
-	}
-
-	err = d.Set("ssh_password", pass)
-	if err != nil {
-		return diag.FromErr(fmt.Errorf("error setting ssh_password attribute: %w", err))
+		return diag.FromErr(
+			fmt.Errorf("failed to finalize rescue for server %s: %w", serverID, err),
+		)
 	}
 
 	d.SetId(serverID)
+
+	return nil
+}
+
+func parseSSHKeys(raw []any) []string {
+	keys := make([]string, 0, len(raw))
+	for _, key := range raw {
+		keys = append(keys, key.(string))
+	}
+
+	return keys
+}
+
+func finalizeOSRescue(
+	ctx context.Context,
+	d *schema.ResourceData,
+	hClient *client.HetznerRobotClient,
+	serverID, serverName string,
+	rescueResp *client.HetznerRescueResponse,
+) error {
+	err := captureRescueHostKeys(ctx, d, rescueResp.Rescue.ServerIP, rescueResp.Rescue.HostKey)
+	if err != nil {
+		return fmt.Errorf("host key verification failed: %w", err)
+	}
+
+	_, err = hClient.RenameServer(ctx, serverID, serverName)
+	if err != nil {
+		return fmt.Errorf("failed to rename server: %w", err)
+	}
+
+	err = d.Set("ip", rescueResp.Rescue.ServerIP)
+	if err != nil {
+		return fmt.Errorf("error setting ip attribute: %w", err)
+	}
+
+	err = d.Set("ssh_password", rescueResp.Rescue.Password)
+	if err != nil {
+		return fmt.Errorf("error setting ssh_password attribute: %w", err)
+	}
 
 	return nil
 }

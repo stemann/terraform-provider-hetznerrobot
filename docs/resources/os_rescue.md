@@ -54,6 +54,8 @@ Only takes effect on Create — changing this forces recreate.
 
 ### Read-Only
 
+- `host_key_fingerprints` (Map of String) MD5 host-key fingerprints keyed by SSH key algorithm (e.g. "ssh-ed25519"), reported by the Hetzner API and verified against the keys actually advertised by the rescue system.
+- `host_keys` (Map of String) Authorized_keys-format public keys for the rescue system, keyed by SSH key algorithm (e.g. "ssh-ed25519"). Each value is suitable to feed directly into a Terraform connection block, e.g. host_key = self.host_keys["ssh-ed25519"].
 - `id` (String) The ID of this resource.
 - `ip` (String) Public IPv4 of the server.
 - `ssh_password` (String, Sensitive) One-shot root password for the rescue system. Set only when ssh_keys is empty; otherwise this is empty and you authenticate with one of the listed keys.
