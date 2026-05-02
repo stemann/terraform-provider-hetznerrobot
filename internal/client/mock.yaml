@@ -859,9 +859,12 @@ paths:
           application/x-www-form-urlencoded:
             schema:
               type: object
+              required:
+                - type
               properties:
                 type:
                   type: string
+                  enum: [sw, hw, power, power_long, man]
       responses:
         '200':
           description: Successful response
@@ -869,6 +872,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Reset'
+              example:
+                reset:
+                  server_ip: 88.99.100.1
+                  server_ipv6_net: '2a01:4f8:abcd::'
+                  server_number: 1234567
+                  type:
+                    - sw
+                    - hw
+                    - power
+                    - power_long
+                    - man
+                  operating_status: running
         '400':
           $ref: '#/components/responses/ErrorResponse'
         '404':

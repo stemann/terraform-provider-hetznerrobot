@@ -271,3 +271,45 @@ func TestAuth(t *testing.T) {
 		})
 	}
 }
+
+func TestRebootServer(t *testing.T) {
+	t.Parallel()
+
+	server := mockServer()
+	t.Cleanup(server.Close)
+
+	c := client.New(&client.ProviderConfig{
+		Username: testUsername,
+		Password: testPassword,
+		BaseURL:  server.URL,
+	})
+
+	for _, resetType := range []string{"sw", "hw", "power", "power_long", "man"} {
+		t.Run(resetType, func(t *testing.T) {
+			t.Parallel()
+
+			err := c.RebootServer(context.Background(), "1234567", resetType)
+			if err != nil {
+				t.Errorf("RebootServer(%q): %v", resetType, err)
+			}
+		})
+	}
+}
+
+func TestRebootServerRejectsInvalidType(t *testing.T) {
+	t.Parallel()
+
+	server := mockServer()
+	t.Cleanup(server.Close)
+
+	c := client.New(&client.ProviderConfig{
+		Username: testUsername,
+		Password: testPassword,
+		BaseURL:  server.URL,
+	})
+
+	err := c.RebootServer(context.Background(), "1234567", "soft")
+	if err == nil {
+		t.Errorf("RebootServer with invalid type should fail")
+	}
+}
