@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/yellowhat/terraform-provider-hetznerrobot/internal/client"
 	"github.com/yellowhat/terraform-provider-hetznerrobot/internal/firewall"
+	"github.com/yellowhat/terraform-provider-hetznerrobot/internal/rdns"
 	"github.com/yellowhat/terraform-provider-hetznerrobot/internal/server"
 	"github.com/yellowhat/terraform-provider-hetznerrobot/internal/vswitch"
 )
@@ -42,10 +43,12 @@ func Provider() *schema.Provider {
 		ResourcesMap: map[string]*schema.Resource{
 			"hetznerrobot_firewall":        firewall.Resource(),
 			"hetznerrobot_os_rescue":       server.ResourceOSRescue(),
+			"hetznerrobot_rdns":            rdns.Resource(),
 			"hetznerrobot_vswitch":         vswitch.Resource(),
 			"hetznerrobot_vswitch_servers": vswitch.ServersResource(),
 		},
 		DataSourcesMap: map[string]*schema.Resource{
+			"hetznerrobot_rdns":    rdns.DataSource(),
 			"hetznerrobot_server":  server.DataSourceServers(),
 			"hetznerrobot_vswitch": vswitch.DataSource(),
 		},

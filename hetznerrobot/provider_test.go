@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/yellowhat/terraform-provider-hetznerrobot/hetznerrobot"
 	"github.com/yellowhat/terraform-provider-hetznerrobot/internal/firewall"
+	"github.com/yellowhat/terraform-provider-hetznerrobot/internal/rdns"
 	"github.com/yellowhat/terraform-provider-hetznerrobot/internal/server"
 	"github.com/yellowhat/terraform-provider-hetznerrobot/internal/vswitch"
 )
@@ -25,6 +26,7 @@ func TestProvider_Resources(t *testing.T) {
 	provider := hetznerrobot.Provider()
 	expectedResources := []string{
 		firewall.ResourceType,
+		rdns.ResourceType,
 		server.ResourceOSRescueType,
 		vswitch.ResourceType,
 		vswitch.ServersResourceType,
@@ -43,6 +45,7 @@ func TestProvider_DataSources(t *testing.T) {
 
 	provider := hetznerrobot.Provider()
 	expectedDataSources := []string{
+		rdns.DataSourceType,
 		server.DataSourceType,
 		vswitch.DataSourceType,
 	}
