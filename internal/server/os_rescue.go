@@ -228,7 +228,7 @@ func waitForSSH(
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		conn, err := dialer.DialContext(ctx, "tcp", ip+":22")
+		conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, "22"))
 		if err == nil {
 			_ = conn.Close()
 

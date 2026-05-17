@@ -137,7 +137,7 @@ func scanAndVerifyHostKeys(
 
 		if !mdMatch && !shaMatch {
 			return nil, nil, fmt.Errorf(
-				"host key for %s (%s) not in API fingerprint list — possible MITM (md5=%s sha256=%s)",
+				"host key for %s (%s) not in API fingerprint list - possible MITM (md5=%s sha256=%s)",
 				host,
 				keyType,
 				md5fp,
