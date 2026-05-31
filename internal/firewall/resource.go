@@ -45,12 +45,32 @@ func Resource() *schema.Resource {
 				Required:    true,
 				Description: "Whether to whitelist Hetzner services.",
 			},
+			"filter_ipv6": {
+				Type:     schema.TypeBool,
+				Optional: true,
+				Default:  false,
+				Description: "Whether to also filter IPv6 packets. When false (Hetzner default), " +
+					"only IPv4 rules apply and IPv6 traffic is unrestricted. When true, IPv6 traffic " +
+					"is evaluated against the rule list using the per-rule ip_version field.",
+			},
 			"rule": {
 				Type:     schema.TypeList,
 				Required: true,
 				MaxItems: maxRulesPerFirewall,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
+						"ip_version": {
+							Type:     schema.TypeString,
+							Optional: true,
+							Default:  "ipv4",
+							ValidateDiagFunc: validation.ToDiagFunc(
+								validation.StringInSlice([]string{"ipv4", "ipv6"}, false),
+							),
+							Description: "IP version this rule matches against (ipv4 or ipv6). " +
+								"Defaults to ipv4 to preserve behavior of pre-1.5.0 versions of " +
+								"this provider, which hardcoded ipv4. Note: per the Hetzner Robot " +
+								"API, rules with a `protocol` value require `ip_version` to be set.",
+						},
 						"name": {
 							Type:        schema.TypeString,
 							Optional:    true,
@@ -124,6 +144,7 @@ func resourceCreate(ctx context.Context, d *schema.ResourceData, meta any) diag.
 	err = hClient.SetFirewall(ctx, client.Firewall{
 		IP:                       server.IP,
 		WhitelistHetznerServices: d.Get("whitelist_hos").(bool),
+		FilterIPv6:               d.Get("filter_ipv6").(bool),
 		Status:                   status,
 		Rules:                    client.FirewallRules{Input: rules},
 	})
@@ -164,6 +185,11 @@ func resourceRead(ctx context.Context, d *schema.ResourceData, meta any) diag.Di
 		return diag.FromErr(fmt.Errorf("error setting whitelist_hos attribute: %w", err))
 	}
 
+	err = d.Set("filter_ipv6", firewall.FilterIPv6)
+	if err != nil {
+		return diag.FromErr(fmt.Errorf("error setting filter_ipv6 attribute: %w", err))
+	}
+
 	err = d.Set("rule", flattenFirewallRules(firewall.Rules.Input))
 	if err != nil {
 		return diag.FromErr(fmt.Errorf("error setting rule attribute: %w", err))
@@ -193,18 +219,20 @@ func resourceDelete(ctx context.Context, d *schema.ResourceData, meta any) diag.
 	err = hClient.SetFirewall(ctx, client.Firewall{
 		IP:                       server.IP,
 		WhitelistHetznerServices: false,
+		FilterIPv6:               false,
 		Status:                   "active",
 		Rules: client.FirewallRules{
 			Input: []client.FirewallRule{
 				{
-					Name:     "Allow all",
-					SrcIP:    "",
-					SrcPort:  "",
-					DstIP:    "",
-					DstPort:  "",
-					Protocol: "",
-					TCPFlags: "",
-					Action:   "accept",
+					IPVersion: "ipv4",
+					Name:      "Allow all",
+					SrcIP:     "",
+					SrcPort:   "",
+					DstIP:     "",
+					DstPort:   "",
+					Protocol:  "",
+					TCPFlags:  "",
+					Action:    "accept",
 				},
 			},
 		},
@@ -250,6 +278,11 @@ func resourceFirewallImportState(
 		return nil, fmt.Errorf("error setting whitelist_hos attribute: %w", err)
 	}
 
+	err = d.Set("filter_ipv6", firewall.FilterIPv6)
+	if err != nil {
+		return nil, fmt.Errorf("error setting filter_ipv6 attribute: %w", err)
+	}
+
 	err = d.Set("rule", flattenFirewallRules(firewall.Rules.Input))
 	if err != nil {
 		return nil, fmt.Errorf("error setting rule attribute: %w", err)
@@ -271,15 +304,17 @@ func buildFirewallRules(ruleList []any) []client.FirewallRule {
 
 	for _, ruleMap := range ruleList {
 		ruleProps := ruleMap.(map[string]any)
+		ipVersion, _ := ruleProps["ip_version"].(string)
 		rules = append(rules, client.FirewallRule{
-			Name:     ruleProps["name"].(string),
-			SrcIP:    ruleProps["src_ip"].(string),
-			SrcPort:  ruleProps["src_port"].(string),
-			DstIP:    ruleProps["dst_ip"].(string),
-			DstPort:  ruleProps["dst_port"].(string),
-			Protocol: ruleProps["protocol"].(string),
-			TCPFlags: ruleProps["tcp_flags"].(string),
-			Action:   ruleProps["action"].(string),
+			IPVersion: ipVersion,
+			Name:      ruleProps["name"].(string),
+			SrcIP:     ruleProps["src_ip"].(string),
+			SrcPort:   ruleProps["src_port"].(string),
+			DstIP:     ruleProps["dst_ip"].(string),
+			DstPort:   ruleProps["dst_port"].(string),
+			Protocol:  ruleProps["protocol"].(string),
+			TCPFlags:  ruleProps["tcp_flags"].(string),
+			Action:    ruleProps["action"].(string),
 		})
 	}
 
@@ -288,16 +323,23 @@ func buildFirewallRules(ruleList []any) []client.FirewallRule {
 
 func flattenFirewallRules(rules []client.FirewallRule) []map[string]any {
 	result := make([]map[string]any, 0, len(rules))
+
 	for _, rule := range rules {
+		ipVersion := rule.IPVersion
+		if ipVersion == "" {
+			ipVersion = "ipv4"
+		}
+
 		result = append(result, map[string]any{
-			"name":      rule.Name,
-			"src_ip":    rule.SrcIP,
-			"src_port":  rule.SrcPort,
-			"dst_ip":    rule.DstIP,
-			"dst_port":  rule.DstPort,
-			"protocol":  rule.Protocol,
-			"tcp_flags": rule.TCPFlags,
-			"action":    rule.Action,
+			"ip_version": ipVersion,
+			"name":       rule.Name,
+			"src_ip":     rule.SrcIP,
+			"src_port":   rule.SrcPort,
+			"dst_ip":     rule.DstIP,
+			"dst_port":   rule.DstPort,
+			"protocol":   rule.Protocol,
+			"tcp_flags":  rule.TCPFlags,
+			"action":     rule.Action,
 		})
 	}
 

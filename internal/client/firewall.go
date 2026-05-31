@@ -16,6 +16,7 @@ import (
 type Firewall struct {
 	IP                       string        `json:"ip"`
 	WhitelistHetznerServices bool          `json:"whitelist_hos"`
+	FilterIPv6               bool          `json:"filter_ipv6"`
 	Status                   string        `json:"status"`
 	Rules                    FirewallRules `json:"rules"`
 }
@@ -27,14 +28,15 @@ type FirewallRules struct {
 
 // FirewallRule defines a firewall rule for FirewallRules.
 type FirewallRule struct {
-	Name     string `json:"name,omitempty"`
-	SrcIP    string `json:"src_ip,omitempty"`
-	SrcPort  string `json:"src_port,omitempty"`
-	DstIP    string `json:"dst_ip,omitempty"`
-	DstPort  string `json:"dst_port,omitempty"`
-	Protocol string `json:"protocol,omitempty"`
-	TCPFlags string `json:"tcp_flags,omitempty"`
-	Action   string `json:"action"`
+	IPVersion string `json:"ip_version,omitempty"`
+	Name      string `json:"name,omitempty"`
+	SrcIP     string `json:"src_ip,omitempty"`
+	SrcPort   string `json:"src_port,omitempty"`
+	DstIP     string `json:"dst_ip,omitempty"`
+	DstPort   string `json:"dst_port,omitempty"`
+	Protocol  string `json:"protocol,omitempty"`
+	TCPFlags  string `json:"tcp_flags,omitempty"`
+	Action    string `json:"action"`
 }
 
 // FirewallResponse defines the response from /firewall.
@@ -81,10 +83,17 @@ func (c *HetznerRobotClient) SetFirewall(
 
 	data := url.Values{}
 	data.Set("whitelist_hos", strconv.FormatBool(firewall.WhitelistHetznerServices))
+	data.Set("filter_ipv6", strconv.FormatBool(firewall.FilterIPv6))
 	data.Set("status", firewall.Status)
 
 	for index, rule := range firewall.Rules.Input {
-		data.Set(fmt.Sprintf("rules[input][%d][ip_version]", index), "ipv4")
+		// Default to ipv4 when the caller doesn't specify.
+		ipVersion := rule.IPVersion
+		if ipVersion == "" {
+			ipVersion = "ipv4"
+		}
+
+		data.Set(fmt.Sprintf("rules[input][%d][ip_version]", index), ipVersion)
 
 		fields := map[string]string{
 			"name":      rule.Name,

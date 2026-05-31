@@ -11,6 +11,7 @@ import (
 var testFirewall = client.Firewall{
 	IP:                       "1.2.3.4",
 	WhitelistHetznerServices: true,
+	FilterIPv6:               false,
 	Status:                   "active",
 	Rules: client.FirewallRules{
 		//exhaustruct:ignore
@@ -28,6 +29,43 @@ var testFirewall = client.Firewall{
 				DstPort:  "80",
 				Protocol: "tcp",
 				Action:   "accept",
+			},
+		},
+	},
+}
+
+//nolint:gochecknoglobals
+var testFirewallIPv6 = client.Firewall{
+	IP:                       "1.2.3.4",
+	WhitelistHetznerServices: true,
+	FilterIPv6:               true,
+	Status:                   "active",
+	Rules: client.FirewallRules{
+		//exhaustruct:ignore
+		Input: []client.FirewallRule{
+			{
+				IPVersion: "ipv4",
+				Name:      "allow-ssh",
+				SrcIP:     "0.0.0.0/0",
+				DstPort:   "22",
+				Protocol:  "tcp",
+				Action:    "accept",
+			},
+			{
+				IPVersion: "ipv4",
+				Name:      "allow-http",
+				SrcIP:     "0.0.0.0/0",
+				DstPort:   "80",
+				Protocol:  "tcp",
+				Action:    "accept",
+			},
+			{
+				IPVersion: "ipv6",
+				Name:      "allow-ssh-v6",
+				SrcIP:     "::/0",
+				DstPort:   "22",
+				Protocol:  "tcp",
+				Action:    "accept",
 			},
 		},
 	},
@@ -121,6 +159,24 @@ func TestSetFirewall(t *testing.T) {
 	})
 
 	err := client.SetFirewall(context.Background(), testFirewall)
+	if err != nil {
+		t.Errorf("SetFirewall() error: %v", err)
+	}
+}
+
+func TestSetFirewallIPv6(t *testing.T) {
+	t.Parallel()
+
+	server := mockServer()
+	defer server.Close()
+
+	client := client.New(&client.ProviderConfig{
+		Username: testUsername,
+		Password: testPassword,
+		BaseURL:  server.URL,
+	})
+
+	err := client.SetFirewall(context.Background(), testFirewallIPv6)
 	if err != nil {
 		t.Errorf("SetFirewall() error: %v", err)
 	}
