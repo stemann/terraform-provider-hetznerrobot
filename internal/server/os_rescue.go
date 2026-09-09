@@ -16,7 +16,9 @@ const (
 	// ResourceOSRescueType is the type name of the Hetzner Robot OS Rescue resource.
 	ResourceOSRescueType = "hetznerrobot_os_rescue"
 	waitMin              = 3
+	downWaitMin          = 1
 	retryAfterSec        = 10
+	dialTimeoutSec       = 5
 )
 
 // ResourceOSRescue defines the os_rescue terraform resource.
@@ -123,11 +125,16 @@ func resourceOSRescueCreate(
 	}
 
 	ip := rescueResp.Rescue.ServerIP
+	if ip == "" {
+		return diag.Errorf("rescue mode for server %s was activated without a server IP", serverID)
+	}
 
 	err = hClient.RebootServer(ctx, serverID, d.Get("reboot").(string))
 	if err != nil {
 		return diag.FromErr(fmt.Errorf("failed to reset server %s: %w", serverID, err))
 	}
+
+	waitForSSHDown(ctx, ip, downWaitMin*time.Minute, retryAfterSec*time.Second)
 
 	err = waitForSSH(ctx, ip, waitMin*time.Minute, retryAfterSec*time.Second)
 	if err != nil {
@@ -213,25 +220,32 @@ func resourceOSRescueUpdate(
 	return nil
 }
 
+// dialSSH reports whether anything accepts a TCP connection on ip:22.
+func dialSSH(ctx context.Context, ip string) bool {
+	//exhaustruct:ignore
+	dialer := &net.Dialer{
+		Timeout: dialTimeoutSec * time.Second,
+	}
+
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, "22"))
+	if err != nil {
+		return false
+	}
+
+	_ = conn.Close()
+
+	return true
+}
+
 func waitForSSH(
 	ctx context.Context,
 	ip string,
 	timeout time.Duration,
 	interval time.Duration,
 ) error {
-	const waitTime = 5
-
-	//exhaustruct:ignore
-	dialer := &net.Dialer{
-		Timeout: waitTime * time.Second,
-	}
-
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(ip, "22"))
-		if err == nil {
-			_ = conn.Close()
-
+		if dialSSH(ctx, ip) {
 			return nil
 		}
 
@@ -239,4 +253,25 @@ func waitForSSH(
 	}
 
 	return fmt.Errorf("SSH not available on %s after %v", ip, timeout)
+}
+
+// waitForSSHDown waits for the installed OS to stop answering on port 22. The
+// reset is asynchronous, so the first connect that succeeds afterwards can
+// still be the old OS, whose host keys are not the ones the API reported for
+// the rescue system. Best effort: a port still answering after timeout is left
+// to waitForSSH.
+func waitForSSHDown(
+	ctx context.Context,
+	ip string,
+	timeout time.Duration,
+	interval time.Duration,
+) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if !dialSSH(ctx, ip) {
+			return
+		}
+
+		time.Sleep(interval)
+	}
 }

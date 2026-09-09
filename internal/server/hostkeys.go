@@ -2,9 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/md5" //nolint:gosec // Hetzner Robot returns MD5 fingerprints; used only to compare.
-	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -15,14 +12,19 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const hostKeyScanTimeout = 10 * time.Second
+const (
+	hostKeyScanTimeout  = 10 * time.Second
+	hostKeyScanBudget   = 2 * time.Minute
+	hostKeyScanInterval = 10 * time.Second
+)
 
 // errHostKeyCaptured aborts the SSH handshake once the host key is captured.
 var errHostKeyCaptured = errors.New("host key captured")
 
 // hostKeyAlgos covers the host-key signature algorithms a current sshd advertises.
 // Multiple entries may resolve to the same underlying key (e.g. RSA + rsa-sha2-*);
-// scanAndVerifyHostKeys deduplicates by marshaled key bytes.
+// scanAndVerifyHostKeys deduplicates by key type (key.Type()), so each type is
+// captured once from the first algorithm that succeeds.
 //
 //nolint:gochecknoglobals // package-level constant list; not a mutable global.
 var hostKeyAlgos = []string{
@@ -33,24 +35,6 @@ var hostKeyAlgos = []string{
 	ssh.KeyAlgoRSASHA512,
 	ssh.KeyAlgoRSASHA256,
 	ssh.KeyAlgoRSA,
-}
-
-func md5Fingerprint(key ssh.PublicKey) string {
-	sum := md5.Sum(key.Marshal()) //nolint:gosec // see file-level comment.
-
-	parts := make([]string, len(sum))
-
-	for i, b := range sum {
-		parts[i] = fmt.Sprintf("%02x", b)
-	}
-
-	return strings.Join(parts, ":")
-}
-
-func sha256Fingerprint(key ssh.PublicKey) string {
-	sum := sha256.Sum256(key.Marshal())
-
-	return "SHA256:" + strings.TrimRight(base64.StdEncoding.EncodeToString(sum[:]), "=")
 }
 
 // scanHostKey dials addr offering only the given host-key algorithm and returns
@@ -86,6 +70,14 @@ func scanHostKey(
 	}
 	defer conn.Close()
 
+	// ClientConfig.Timeout covers the dial only, and ssh.NewClientConn neither
+	// takes a context nor sets a deadline, so a peer that accepts the connection
+	// and then stalls before its banner would block here indefinitely.
+	err = conn.SetDeadline(time.Now().Add(timeout))
+	if err != nil {
+		return nil, fmt.Errorf("set deadline for %s: %w", addr, err)
+	}
+
 	_, _, _, _ = ssh.NewClientConn(conn, addr, cfg) //nolint:dogsled // we only want the host key.
 
 	if captured == nil {
@@ -93,6 +85,99 @@ func scanHostKey(
 	}
 
 	return captured, nil
+}
+
+// scanHostKeys probes addr once per known host-key algorithm and returns the
+// captured keys by key type. Per-algorithm failures are kept rather than
+// dropped: a server that has no key of that type and a connection the peer
+// reset look the same to a single probe, so the errors are what tell the two
+// apart once every probe has run.
+func scanHostKeys(ctx context.Context, addr string) (map[string]ssh.PublicKey, error) {
+	keys := make(map[string]ssh.PublicKey, len(hostKeyAlgos))
+
+	var errs []error
+
+	for _, algo := range hostKeyAlgos {
+		key, err := scanHostKey(ctx, addr, algo, hostKeyScanTimeout)
+		if err != nil {
+			errs = append(errs, err)
+
+			continue
+		}
+
+		if _, dup := keys[key.Type()]; !dup {
+			keys[key.Type()] = key
+		}
+	}
+
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("no host keys captured from %s: %w", addr, errors.Join(errs...))
+	}
+
+	return keys, nil
+}
+
+// verifyHostKeys matches each captured key against the API-supplied
+// fingerprints, and returns the verified MD5 fingerprints and the
+// authorized_keys-formatted keys, both keyed by SSH key type.
+func verifyHostKeys(
+	host string,
+	keys map[string]ssh.PublicKey,
+	allowed map[string]struct{},
+) (map[string]string, map[string]string, error) {
+	fingerprints := make(map[string]string, len(keys))
+	hostKeys := make(map[string]string, len(keys))
+
+	for keyType, key := range keys {
+		md5fp := ssh.FingerprintLegacyMD5(key)
+		sha256fp := ssh.FingerprintSHA256(key)
+		_, mdMatch := allowed[strings.ToLower(md5fp)]
+		_, shaMatch := allowed[strings.ToLower(sha256fp)]
+
+		if !mdMatch && !shaMatch {
+			return nil, nil, fmt.Errorf(
+				"host key for %s (%s) not in API fingerprint list - possible MITM (md5=%s sha256=%s)",
+				host,
+				keyType,
+				md5fp,
+				sha256fp,
+			)
+		}
+
+		fingerprints[keyType] = md5fp
+		hostKeys[keyType] = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
+	}
+
+	return fingerprints, hostKeys, nil
+}
+
+// scanHostKeysWithin retries a scan that captured nothing until budget is
+// spent: the rescue system restarts sshd shortly after it first accepts on
+// port 22, so an entire round of probes can fail on a reset connection a
+// second after the port came up.
+func scanHostKeysWithin(
+	ctx context.Context,
+	addr string,
+	budget, interval time.Duration,
+) (map[string]ssh.PublicKey, error) {
+	deadline := time.Now().Add(budget)
+
+	for {
+		keys, err := scanHostKeys(ctx, addr)
+		if err == nil {
+			return keys, nil
+		}
+
+		if !time.Now().Before(deadline) {
+			return nil, err
+		}
+
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("scanning %s: %w", addr, ctx.Err())
+		case <-time.After(interval):
+		}
+	}
 }
 
 // scanAndVerifyHostKeys probes host:22 for each known host-key algorithm and
@@ -116,44 +201,13 @@ func scanAndVerifyHostKeys(
 	}
 
 	addr := net.JoinHostPort(host, "22")
-	fingerprints := map[string]string{}
-	hostKeys := map[string]string{}
 
-	for _, algo := range hostKeyAlgos {
-		key, err := scanHostKey(ctx, addr, algo, hostKeyScanTimeout)
-		if err != nil {
-			continue
-		}
-
-		keyType := key.Type()
-		if _, dup := hostKeys[keyType]; dup {
-			continue
-		}
-
-		md5fp := md5Fingerprint(key)
-		sha256fp := sha256Fingerprint(key)
-		_, mdMatch := allowed[strings.ToLower(md5fp)]
-		_, shaMatch := allowed[strings.ToLower(sha256fp)]
-
-		if !mdMatch && !shaMatch {
-			return nil, nil, fmt.Errorf(
-				"host key for %s (%s) not in API fingerprint list - possible MITM (md5=%s sha256=%s)",
-				host,
-				keyType,
-				md5fp,
-				sha256fp,
-			)
-		}
-
-		fingerprints[keyType] = md5fp
-		hostKeys[keyType] = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
+	keys, err := scanHostKeysWithin(ctx, addr, hostKeyScanBudget, hostKeyScanInterval)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	if len(hostKeys) == 0 {
-		return nil, nil, fmt.Errorf("no host keys captured from %s", host)
-	}
-
-	return fingerprints, hostKeys, nil
+	return verifyHostKeys(host, keys, allowed)
 }
 
 // captureRescueHostKeys scans the rescue system, verifies its keys against
