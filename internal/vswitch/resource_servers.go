@@ -3,7 +3,6 @@ package vswitch
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -31,9 +30,9 @@ func ServersResource() *schema.Resource {
 				Description: "Existing vSwitch ID.",
 			},
 			"servers": {
-				Type:        schema.TypeList,
+				Type:        schema.TypeSet,
 				Required:    true,
-				Description: "List of server IDs to attach to the vSwitch.",
+				Description: "Server IDs to attach to the vSwitch.",
 				Elem:        &schema.Schema{Type: schema.TypeInt},
 			},
 			"include_unmanaged": {
@@ -55,7 +54,7 @@ func resourceServersCreate(ctx context.Context, d *schema.ResourceData, meta any
 	vswID := d.Get("vswitch_id").(string)
 
 	servers := d.Get("servers")
-	serverIDs := parseServerIDs(servers.([]any))
+	serverIDs := parseServerIDs(servers.(*schema.Set))
 	serverObjs := parseServerIDsToVSwitchServers(serverIDs)
 
 	err := hClient.AddVSwitchServers(ctx, vswID, serverObjs)
@@ -98,7 +97,6 @@ func resourceServersRead(ctx context.Context, d *schema.ResourceData, meta any) 
 	}
 
 	servers := flattenServers(vsw.Servers)
-	sort.Ints(servers)
 
 	err = d.Set("servers", servers)
 	if err != nil {
@@ -146,7 +144,7 @@ func resourceServersDelete(ctx context.Context, d *schema.ResourceData, meta any
 
 	id := d.Id()
 	servers := d.Get("servers")
-	serverIDs := parseServerIDs(servers.([]any))
+	serverIDs := parseServerIDs(servers.(*schema.Set))
 	serverObjs := parseServerIDsToVSwitchServers(serverIDs)
 
 	err := hClient.RemoveVSwitchServers(ctx, id, serverObjs)

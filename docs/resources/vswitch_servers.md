@@ -30,7 +30,7 @@ resource "hetznerrobot_vswitch_servers" "main" {
 
 ### Required
 
-- `servers` (List of Number) List of server IDs to attach to the vSwitch.
+- `servers` (Set of Number) Server IDs to attach to the vSwitch.
 - `vswitch_id` (String) Existing vSwitch ID.
 
 ### Optional
