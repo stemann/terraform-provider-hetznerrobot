@@ -234,94 +234,25 @@ func TestScanHostKeysWithinHonorsContext(t *testing.T) {
 	}
 }
 
-func TestVerifyHostKeys(t *testing.T) {
+func TestHostKeyAttributes(t *testing.T) {
 	t.Parallel()
 
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	addr, want := startHostKeyServer(t, 0)
+
+	keys, err := scanHostKeys(context.Background(), addr)
 	if err != nil {
-		t.Fatalf("generating host key: %v", err)
+		t.Fatalf("scanHostKeys: %v", err)
 	}
 
-	signer, err := ssh.NewSignerFromKey(priv)
-	if err != nil {
-		t.Fatalf("creating signer: %v", err)
+	fingerprints, hostKeys := hostKeyAttributes(keys)
+
+	keyType := want.Type()
+	if got := fingerprints[keyType]; got != ssh.FingerprintLegacyMD5(want) {
+		t.Errorf("fingerprint = %q, want %q", got, ssh.FingerprintLegacyMD5(want))
 	}
 
-	key := signer.PublicKey()
-	keys := map[string]ssh.PublicKey{key.Type(): key}
-	md5fp := ssh.FingerprintLegacyMD5(key)
-	sha256fp := ssh.FingerprintSHA256(key)
-
-	type testCase struct {
-		name     string
-		expected []string
-		wantErr  bool
-	}
-
-	testCases := []testCase{
-		{name: "MD5 fingerprint", expected: []string{md5fp}, wantErr: false},
-		{name: "SHA256 fingerprint", expected: []string{sha256fp}, wantErr: false},
-		{
-			name:     "MD5 fingerprint as the API pads it",
-			expected: []string{" " + strings.ToUpper(md5fp) + " "},
-			wantErr:  false,
-		},
-		{
-			name:     "Fingerprint of another key",
-			expected: []string{"98:7d:e8:3d:f4:2b:8a:c0:f5:63:60:41:1d:5c:52:6a"},
-			wantErr:  true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			allowed := make(map[string]struct{}, len(tc.expected))
-			for _, fp := range tc.expected {
-				allowed[strings.ToLower(strings.TrimSpace(fp))] = struct{}{}
-			}
-
-			fingerprints, hostKeys, err := verifyHostKeys("192.0.2.1", keys, allowed)
-			if tc.wantErr {
-				if err == nil {
-					t.Fatal("verifyHostKeys accepted a key the API did not report")
-				}
-
-				if !strings.Contains(err.Error(), "possible MITM") {
-					t.Errorf("error does not report a possible MITM: %v", err)
-				}
-
-				return
-			}
-
-			if err != nil {
-				t.Fatalf("verifyHostKeys: %v", err)
-			}
-
-			if fingerprints[key.Type()] != md5fp {
-				t.Errorf("fingerprint = %q, want %q", fingerprints[key.Type()], md5fp)
-			}
-
-			want := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
-			if hostKeys[key.Type()] != want {
-				t.Errorf("host key = %q, want %q", hostKeys[key.Type()], want)
-			}
-		})
-	}
-}
-
-func TestScanAndVerifyHostKeysWithoutExpectedFingerprints(t *testing.T) {
-	t.Parallel()
-
-	// The API reporting nothing must not be read as nothing to verify against:
-	// this has to fail before anything is dialed.
-	_, _, err := scanAndVerifyHostKeys(context.Background(), "192.0.2.1", nil)
-	if err == nil {
-		t.Fatal("scanAndVerifyHostKeys trusted a scan with no API fingerprints")
-	}
-
-	if !strings.Contains(err.Error(), "refusing to trust scan") {
-		t.Errorf("unexpected error: %v", err)
+	wantKey := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(want)))
+	if got := hostKeys[keyType]; got != wantKey {
+		t.Errorf("host key = %q, want %q", got, wantKey)
 	}
 }

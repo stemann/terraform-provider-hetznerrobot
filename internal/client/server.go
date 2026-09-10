@@ -29,9 +29,8 @@ type Server struct {
 // HetznerRescueResponse defines the response when setting rescue mode.
 type HetznerRescueResponse struct {
 	Rescue struct {
-		ServerIP string   `json:"server_ip"`
-		Password string   `json:"password"`
-		HostKey  []string `json:"host_key"`
+		ServerIP string `json:"server_ip"`
+		Password string `json:"password"`
 	} `json:"rescue"`
 }
 

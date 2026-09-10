@@ -23,7 +23,7 @@ var errHostKeyCaptured = errors.New("host key captured")
 
 // hostKeyAlgos covers the host-key signature algorithms a current sshd advertises.
 // Multiple entries may resolve to the same underlying key (e.g. RSA + rsa-sha2-*);
-// scanAndVerifyHostKeys deduplicates by key type (key.Type()), so each type is
+// scanHostKeys deduplicates by key type (key.Type()), so each type is
 // captured once from the first algorithm that succeeds.
 //
 //nolint:gochecknoglobals // package-level constant list; not a mutable global.
@@ -117,40 +117,6 @@ func scanHostKeys(ctx context.Context, addr string) (map[string]ssh.PublicKey, e
 	return keys, nil
 }
 
-// verifyHostKeys matches each captured key against the API-supplied
-// fingerprints, and returns the verified MD5 fingerprints and the
-// authorized_keys-formatted keys, both keyed by SSH key type.
-func verifyHostKeys(
-	host string,
-	keys map[string]ssh.PublicKey,
-	allowed map[string]struct{},
-) (map[string]string, map[string]string, error) {
-	fingerprints := make(map[string]string, len(keys))
-	hostKeys := make(map[string]string, len(keys))
-
-	for keyType, key := range keys {
-		md5fp := ssh.FingerprintLegacyMD5(key)
-		sha256fp := ssh.FingerprintSHA256(key)
-		_, mdMatch := allowed[strings.ToLower(md5fp)]
-		_, shaMatch := allowed[strings.ToLower(sha256fp)]
-
-		if !mdMatch && !shaMatch {
-			return nil, nil, fmt.Errorf(
-				"host key for %s (%s) not in API fingerprint list - possible MITM (md5=%s sha256=%s)",
-				host,
-				keyType,
-				md5fp,
-				sha256fp,
-			)
-		}
-
-		fingerprints[keyType] = md5fp
-		hostKeys[keyType] = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
-	}
-
-	return fingerprints, hostKeys, nil
-}
-
 // scanHostKeysWithin retries a scan that captured nothing until budget is
 // spent: the rescue system restarts sshd shortly after it first accepts on
 // port 22, so an entire round of probes can fail on a reset connection a
@@ -180,48 +146,39 @@ func scanHostKeysWithin(
 	}
 }
 
-// scanAndVerifyHostKeys probes host:22 for each known host-key algorithm and
-// verifies every captured key against the API-supplied fingerprints. It returns
-// two maps keyed by SSH key type (e.g. "ssh-ed25519", "ssh-rsa"): the verified
-// MD5 fingerprints and the authorized_keys-formatted public keys, ready to be
-// passed to a Terraform connection block as host_key. A captured key whose
-// fingerprint is not in the API list aborts the call as a possible MITM.
-func scanAndVerifyHostKeys(
-	ctx context.Context,
-	host string,
-	expected []string,
-) (map[string]string, map[string]string, error) {
-	if len(expected) == 0 {
-		return nil, nil, errors.New("no expected fingerprints from API; refusing to trust scan")
+// hostKeyAttributes renders captured keys as the two computed attributes: MD5
+// fingerprints and authorized_keys-formatted keys, both keyed by SSH key type
+// (e.g. "ssh-ed25519", "ssh-rsa"). The fingerprints are computed here, since
+// the Hetzner API reports none for the rescue system.
+func hostKeyAttributes(keys map[string]ssh.PublicKey) (map[string]string, map[string]string) {
+	fingerprints := make(map[string]string, len(keys))
+	hostKeys := make(map[string]string, len(keys))
+
+	for keyType, key := range keys {
+		fingerprints[keyType] = ssh.FingerprintLegacyMD5(key)
+		hostKeys[keyType] = strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
 	}
 
-	allowed := make(map[string]struct{}, len(expected))
-	for _, fp := range expected {
-		allowed[strings.ToLower(strings.TrimSpace(fp))] = struct{}{}
-	}
-
-	addr := net.JoinHostPort(host, "22")
-
-	keys, err := scanHostKeysWithin(ctx, addr, hostKeyScanBudget, hostKeyScanInterval)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return verifyHostKeys(host, keys, allowed)
+	return fingerprints, hostKeys
 }
 
-// captureRescueHostKeys scans the rescue system, verifies its keys against
-// the API fingerprints, and stores the result on the resource.
+// captureRescueHostKeys scans host:22 for each known host-key algorithm and
+// stores what it captured on the resource. The keys are trusted on first use:
+// the Hetzner API reports no fingerprints for the rescue system, so there is
+// nothing to verify them against.
 func captureRescueHostKeys(
 	ctx context.Context,
 	d *schema.ResourceData,
 	host string,
-	expected []string,
 ) error {
-	fingerprints, hostKeys, err := scanAndVerifyHostKeys(ctx, host, expected)
+	addr := net.JoinHostPort(host, "22")
+
+	keys, err := scanHostKeysWithin(ctx, addr, hostKeyScanBudget, hostKeyScanInterval)
 	if err != nil {
 		return err
 	}
+
+	fingerprints, hostKeys := hostKeyAttributes(keys)
 
 	err = d.Set("host_key_fingerprints", fingerprints)
 	if err != nil {

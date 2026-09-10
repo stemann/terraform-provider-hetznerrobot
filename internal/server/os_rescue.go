@@ -27,9 +27,16 @@ func ResourceOSRescue() *schema.Resource {
 		Description: `Reboot a server into Hetzner Robot rescue system:
 
 1. activate the Hetzner Robot rescue system
+
 2. issue the reset (hw by default, sw for a Ctrl+Alt+Del)
-3. wait for the rescue system's SSH port to come up
-4. rename the server
+
+3. wait for the installed OS to stop answering on port 22
+
+4. wait for the rescue system's SSH port to come up
+
+5. scan the rescue system's SSH host keys and expose them
+
+6. rename the server
 
 Updates only handle server_name changes; all other fields are effectively immutable.
 Read and Delete are no-ops, so destroying the resource does not deactivate rescue mode or reboot the server back to its installed OS.`,
@@ -89,14 +96,15 @@ Only takes effect on Create — changing this forces recreate.`,
 				Type:        schema.TypeMap,
 				Computed:    true,
 				Elem:        &schema.Schema{Type: schema.TypeString},
-				Description: "MD5 host-key fingerprints keyed by SSH key algorithm (e.g. \"ssh-ed25519\"), reported by the Hetzner API and verified against the keys actually advertised by the rescue system.",
+				Description: "MD5 fingerprints of the host keys the rescue system presented, keyed by SSH key algorithm (e.g. \"ssh-ed25519\"). Computed from the scanned keys; the Hetzner API reports no fingerprints for the rescue system.",
 			},
 			"host_keys": {
 				Type:     schema.TypeMap,
 				Computed: true,
 				Elem:     &schema.Schema{Type: schema.TypeString},
-				Description: "Authorized_keys-format public keys for the rescue system, keyed by SSH key algorithm (e.g. \"ssh-ed25519\"). " +
-					"Each value is suitable to feed directly into a Terraform connection block, e.g. host_key = self.host_keys[\"ssh-ed25519\"].",
+				Description: "Host keys the rescue system presented, in authorized_keys format, keyed by SSH key algorithm (e.g. \"ssh-ed25519\"). " +
+					"Each value is suitable to feed directly into a Terraform connection block, e.g. host_key = self.host_keys[\"ssh-ed25519\"]. " +
+					"Trusted on first use: there is nothing to verify them against.",
 			},
 		},
 	}
@@ -150,7 +158,15 @@ func resourceOSRescueCreate(
 
 	d.SetId(serverID)
 
-	return nil
+	unverified := diag.Diagnostic{
+		Severity: diag.Warning,
+		Summary:  "Rescue system host keys are unverified",
+		Detail: "host_keys and host_key_fingerprints hold what the rescue system presented on first " +
+			"contact. The Hetzner Robot API reports no host-key fingerprints for the rescue system, " +
+			"so there is nothing to verify them against.",
+	}
+
+	return diag.Diagnostics{unverified}
 }
 
 func parseSSHKeys(raw []any) []string {
@@ -169,9 +185,9 @@ func finalizeOSRescue(
 	serverID, serverName string,
 	rescueResp *client.HetznerRescueResponse,
 ) error {
-	err := captureRescueHostKeys(ctx, d, rescueResp.Rescue.ServerIP, rescueResp.Rescue.HostKey)
+	err := captureRescueHostKeys(ctx, d, rescueResp.Rescue.ServerIP)
 	if err != nil {
-		return fmt.Errorf("host key verification failed: %w", err)
+		return fmt.Errorf("host key capture failed: %w", err)
 	}
 
 	_, err = hClient.RenameServer(ctx, serverID, serverName)
@@ -255,11 +271,7 @@ func waitForSSH(
 	return fmt.Errorf("SSH not available on %s after %v", ip, timeout)
 }
 
-// waitForSSHDown waits for the installed OS to stop answering on port 22. The
-// reset is asynchronous, so the first connect that succeeds afterwards can
-// still be the old OS, whose host keys are not the ones the API reported for
-// the rescue system. Best effort: a port still answering after timeout is left
-// to waitForSSH.
+// waitForSSHDown waits for the installed OS to stop answering on port 22.
 func waitForSSHDown(
 	ctx context.Context,
 	ip string,

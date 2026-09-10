@@ -7,7 +7,9 @@ description: |-
   
   activate the Hetzner Robot rescue system
   issue the reset (hw by default, sw for a Ctrl+Alt+Del)
+  wait for the installed OS to stop answering on port 22
   wait for the rescue system's SSH port to come up
+  scan the rescue system's SSH host keys and expose them
   rename the server
   Updates only handle server_name changes; all other fields are effectively immutable.
   Read and Delete are no-ops, so destroying the resource does not deactivate rescue mode or reboot the server back to its installed OS.
@@ -18,9 +20,16 @@ description: |-
 Reboot a server into Hetzner Robot rescue system:
 
 1. activate the Hetzner Robot rescue system
+
 2. issue the reset (hw by default, sw for a Ctrl+Alt+Del)
-3. wait for the rescue system's SSH port to come up
-4. rename the server
+
+3. wait for the installed OS to stop answering on port 22
+
+4. wait for the rescue system's SSH port to come up
+
+5. scan the rescue system's SSH host keys and expose them
+
+6. rename the server
 
 Updates only handle server_name changes; all other fields are effectively immutable.
 Read and Delete are no-ops, so destroying the resource does not deactivate rescue mode or reboot the server back to its installed OS.
@@ -76,8 +85,8 @@ Only takes effect on Create — changing this forces recreate.
 
 ### Read-Only
 
-- `host_key_fingerprints` (Map of String) MD5 host-key fingerprints keyed by SSH key algorithm (e.g. "ssh-ed25519"), reported by the Hetzner API and verified against the keys actually advertised by the rescue system.
-- `host_keys` (Map of String) Authorized_keys-format public keys for the rescue system, keyed by SSH key algorithm (e.g. "ssh-ed25519"). Each value is suitable to feed directly into a Terraform connection block, e.g. host_key = self.host_keys["ssh-ed25519"].
+- `host_key_fingerprints` (Map of String) MD5 fingerprints of the host keys the rescue system presented, keyed by SSH key algorithm (e.g. "ssh-ed25519"). Computed from the scanned keys; the Hetzner API reports no fingerprints for the rescue system.
+- `host_keys` (Map of String) Host keys the rescue system presented, in authorized_keys format, keyed by SSH key algorithm (e.g. "ssh-ed25519"). Each value is suitable to feed directly into a Terraform connection block, e.g. host_key = self.host_keys["ssh-ed25519"]. Trusted on first use: there is nothing to verify them against.
 - `id` (String) The ID of this resource.
 - `ip` (String) Public IPv4 of the server.
 - `ssh_password` (String, Sensitive) One-shot root password for the rescue system. Set only when ssh_keys is empty; otherwise this is empty and you authenticate with one of the listed keys.
