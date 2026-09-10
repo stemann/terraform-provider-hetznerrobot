@@ -16,7 +16,7 @@ description: |-
 resource "hetznerrobot_vswitch" "main" {
   name    = "main"
   vlan    = 4000
-  servers = ["1234567"]
+  servers = [1234567]
 }
 ```
 
@@ -30,7 +30,7 @@ resource "hetznerrobot_vswitch" "main" {
 ### Optional
 
 - `cancellation_date` (String) The cancellation date for the vSwitch. If not provided, defaults to 'now'.
-- `servers` (List of Number) List of server IDs to connect to the vSwitch.
+- `servers` (Set of Number) Server IDs to connect to the vSwitch.
 - `vlan` (Number) The VLAN ID for the vSwitch. If not provided, one will be chosen randomly from [4000..4091].
 
 ### Read-Only

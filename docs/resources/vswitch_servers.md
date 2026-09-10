@@ -14,13 +14,13 @@ description: |-
 
 ```terraform
 resource "hetznerrobot_vswitch_servers" "main" {
-  vswitch_id = 10000
-  servers    = ["1234567"]
+  vswitch_id = "10000"
+  servers    = [1234567]
 }
 
-resource "hetznerrobot_vswitch_servers" "main" {
-  vswitch_id        = 100001
-  servers           = ["1234567"]
+resource "hetznerrobot_vswitch_servers" "unmanaged" {
+  vswitch_id        = "100001"
+  servers           = [1234567]
   include_unmanaged = true
 }
 ```
@@ -30,7 +30,7 @@ resource "hetznerrobot_vswitch_servers" "main" {
 
 ### Required
 
-- `servers` (List of Number) List of server IDs to attach to the vSwitch.
+- `servers` (Set of Number) Server IDs to attach to the vSwitch.
 - `vswitch_id` (String) Existing vSwitch ID.
 
 ### Optional

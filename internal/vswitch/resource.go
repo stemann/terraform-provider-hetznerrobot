@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"sort"
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -40,9 +39,9 @@ func Resource() *schema.Resource {
 				Description: "The VLAN ID for the vSwitch. If not provided, one will be chosen randomly from [4000..4091].",
 			},
 			"servers": {
-				Type:        schema.TypeList,
+				Type:        schema.TypeSet,
 				Optional:    true,
-				Description: "List of server IDs to connect to the vSwitch.",
+				Description: "Server IDs to connect to the vSwitch.",
 				Elem:        &schema.Schema{Type: schema.TypeInt},
 			},
 			"cancellation_date": {
@@ -94,7 +93,7 @@ func resourceCreate(ctx context.Context, d *schema.ResourceData, meta any) diag.
 	vswID := strconv.Itoa(vsw.ID)
 
 	if servers, ok := d.GetOk("servers"); ok {
-		serverIDs := parseServerIDs(servers.([]any))
+		serverIDs := parseServerIDs(servers.(*schema.Set))
 
 		serverObjects := parseServerIDsToVSwitchServers(serverIDs)
 		if len(serverObjects) > 0 {
@@ -139,7 +138,6 @@ func resourceRead(ctx context.Context, d *schema.ResourceData, meta any) diag.Di
 	}
 
 	servers := flattenServers(vsw.Servers)
-	sort.Ints(servers)
 
 	err = d.Set("servers", servers)
 	if err != nil {
@@ -218,8 +216,8 @@ func manageServers(
 	id string,
 ) diag.Diagnostics {
 	oldRaw, newRaw := d.GetChange("servers")
-	oldServers := parseServerIDs(oldRaw.([]any))
-	newServers := parseServerIDs(newRaw.([]any))
+	oldServers := parseServerIDs(oldRaw.(*schema.Set))
+	newServers := parseServerIDs(newRaw.(*schema.Set))
 
 	toAdd, toRemove := diffServers(oldServers, newServers)
 
@@ -268,9 +266,9 @@ func resourceDelete(ctx context.Context, d *schema.ResourceData, meta any) diag.
 }
 
 // helpers.
-func parseServerIDs(servers []any) []int {
-	result := make([]int, 0, len(servers))
-	for _, s := range servers {
+func parseServerIDs(servers *schema.Set) []int {
+	result := make([]int, 0, servers.Len())
+	for _, s := range servers.List() {
 		result = append(result, s.(int))
 	}
 
@@ -298,8 +296,6 @@ func flattenServers(servers []client.VSwitchServer) []int {
 	for _, s := range servers {
 		result = append(result, s.ServerNumber)
 	}
-
-	sort.Ints(result)
 
 	return result
 }

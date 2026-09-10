@@ -1,10 +1,109 @@
 package vswitch
 
 import (
+	"context"
+	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
+
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
+
+func serversResources() map[string]*schema.Resource {
+	return map[string]*schema.Resource{
+		ResourceType:        Resource(),
+		ServersResourceType: ServersResource(),
+	}
+}
+
+// serversDiff plans config against stored and reports the servers attributes that changed.
+func serversDiff(t *testing.T, res *schema.Resource, stored, config []any) []string {
+	t.Helper()
+
+	data := schema.TestResourceDataRaw(t, res.Schema, map[string]any{"servers": stored})
+	data.SetId("70996")
+
+	diff, err := res.Diff(
+		context.Background(),
+		data.State(),
+		terraform.NewResourceConfigRaw(map[string]any{"servers": config}),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+
+	var changes []string
+
+	if diff != nil {
+		for attr, d := range diff.Attributes {
+			if strings.HasPrefix(attr, "servers") {
+				changes = append(changes, fmt.Sprintf("%s %v", attr, d))
+			}
+		}
+	}
+
+	// Sort because diff.Attributes iterates in random order.
+	sort.Strings(changes)
+
+	return changes
+}
+
+func TestServersOrderIsNotAChange(t *testing.T) {
+	t.Parallel()
+
+	stored := []any{2614609, 2628146, 2632954, 3002292}
+	reordered := []any{2614609, 3002292, 2628146, 2632954}
+
+	for name, res := range serversResources() {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			changes := serversDiff(t, res, stored, reordered)
+			if len(changes) > 0 {
+				t.Errorf("reordered servers planned as a change: %v", changes)
+			}
+		})
+	}
+}
+
+func TestServersAddIsAChange(t *testing.T) {
+	t.Parallel()
+
+	stored := []any{2614609, 2628146, 2632954, 3002292}
+	added := append(slices.Clone(stored), 3100000)
+
+	for name, res := range serversResources() {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			changes := serversDiff(t, res, stored, added)
+			if len(changes) == 0 {
+				t.Error("added server did not plan as a change")
+			}
+		})
+	}
+}
+
+func TestParseServerIDs(t *testing.T) {
+	t.Parallel()
+
+	set := schema.NewSet(
+		schema.HashSchema(&schema.Schema{Type: schema.TypeInt}),
+		[]any{3, 1, 2},
+	)
+
+	got := parseServerIDs(set)
+	sort.Ints(got)
+
+	want := []int{1, 2, 3}
+	if !slices.Equal(got, want) {
+		t.Errorf("parseServerIDs = %v, want %v", got, want)
+	}
+}
 
 func TestDiffServers(t *testing.T) {
 	t.Parallel()
