@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"sort"
 	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
@@ -297,8 +296,6 @@ func flattenServers(servers []client.VSwitchServer) []int {
 	for _, s := range servers {
 		result = append(result, s.ServerNumber)
 	}
-
-	sort.Ints(result)
 
 	return result
 }
