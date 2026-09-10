@@ -244,25 +244,35 @@ components:
         server_number:
           type: integer
         os:
-          type: array
-          items:
-            type: string
+          oneOf:
+            - type: array
+              items:
+                type: string
+            - type: string
         arch:
-          type: array
-          items:
-            type: integer
+          oneOf:
+            - type: array
+              items:
+                type: integer
+            - type: integer
         active:
           type: boolean
         password:
           type: string
+          nullable: true
         authorized_key:
           type: array
           items:
-            type: string
+            $ref: '#/components/schemas/SSHKeyRef'
         host_key:
           type: array
+          # The shape below is Robot's convention and the docs' one populated example,
+          # unverified for this field specifically.
           items:
-            type: string
+            $ref: '#/components/schemas/SSHKeyRef'
+        boot_time:
+          type: string
+          nullable: true
         dist:
           type: array
           items:
@@ -273,6 +283,26 @@ components:
             type: string
         hostname:
           type: string
+
+    # Robot wraps every SSH key record in a "key" object.
+    # POST /boot/{server-number}/rescue echoes authorized_key as
+    # [{"key": {"name": ..., "fingerprint": ..., "type": "RSA", "size": 4096, "created_at": ...}}].
+    SSHKeyRef:
+      type: object
+      properties:
+        key:
+          type: object
+          properties:
+            name:
+              type: string
+            fingerprint:
+              type: string
+            type:
+              type: string
+            size:
+              type: integer
+            created_at:
+              type: string
 
     Firewall:
       type: object
@@ -945,6 +975,8 @@ paths:
                 arch:
                   type: integer
                 authorized_key:
+                  # Input takes bare fingerprints.
+                  # The response echoes them wrapped as SSHKeyRef.
                   type: array
                   items:
                     type: string
